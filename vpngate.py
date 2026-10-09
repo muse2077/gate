@@ -307,43 +307,37 @@ EDGE_HOSTS = [
 NODES_URL = os.environ.get("NODES_URL", "https://muse2077.github.io/gate/nodes.txt")
 
 def build_nodes_text(data):
-    """生成纯节点行版本: 仅保留日本(JP)和美国(US)，按延迟优选前 40 个"""
+    """生成纯节点行版本 (原版逻辑 + 限制最多 40 个): 每行 = 入口地址#名字$sstp://..."""
     countries = data["countries"]
     _entry = os.environ.get("HOSTS_ENTRY", "").strip()
     edge = [e.strip() for e in _entry.split(",") if e.strip()] or EDGE_HOSTS
     lines = []
+    idx = 0
+    ordered = sorted(countries.items(), key=lambda kv: (-int(kv[1].get("count") or 0), str(kv[1].get("code") or kv[0])))
     
-    # 1. 筛选并收集日本 (JP) 和美国 (US) 的节点
-    target_nodes = []
-    for cname, grp in countries.items():
+    for cname, grp in ordered:
         code = str(grp.get("code") or "?").upper()
-        if code in ["JP", "US"]:
-            zh = COUNTRY_ZH.get(code, code)
-            for n in grp.get("nodes", []):
-                # 记录中文地区名，方便后面命名
-                n_copy = dict(n)
-                n_copy["zh_name"] = zh
-                target_nodes.append(n_copy)
-
-    # 2. 排序：住宅优先，其次延迟从低到高
-    target_nodes.sort(
-        key=lambda n: (
-            0 if n.get("residential") == "residential" else 1,
-            n.get("latency_ms") is None,
-            n.get("latency_ms") or 0,
-            n.get("host") or ""
-        )
-    )
-
-    # 3. 严格截取前 40 个优选节点
-    selected_nodes = target_nodes[:40]
-
-    # 4. 生成符合面板格式的节点行
-    for i, n in enumerate(selected_nodes, 1):
-        entry = edge[(i - 1) % len(edge)]
-        tag = "住宅" if n.get("residential") == "residential" else "机房"
-        zh = n["zh_name"]
-        lines.append(f"{entry}#{zh}-{tag}-{i:02d}$sstp://vpn:vpn@{n['host']}:{n['port']}")
+        zh = COUNTRY_ZH.get(code) or (code if code and code != "?" else cname)
+        nodes = sorted(grp["nodes"], key=lambda n: (0 if n.get("residential") == "residential" else 1, n.get("latency_ms") is None, n.get("latency_ms") or 0, n.get("host") or ""))
+        res_nodes = [n for n in nodes if n.get("residential") == "residential"]
+        dc_nodes = [n for n in nodes if n.get("residential") != "residential"]
+        
+        for i, n in enumerate(res_nodes, 1):
+            if len(lines) >= 40:
+                break
+            entry = edge[idx % len(edge)]
+            idx += 1
+            lines.append(f"{entry}#{zh}-住宅-{i:02d}$sstp://vpn:vpn@{n['host']}:{n['port']}")
+            
+        for i, n in enumerate(dc_nodes, 1):
+            if len(lines) >= 40:
+                break
+            entry = edge[idx % len(edge)]
+            idx += 1
+            lines.append(f"{entry}#{zh}-机房-{i:02d}$sstp://vpn:vpn@{n['host']}:{n['port']}")
+            
+        if len(lines) >= 88:
+            break
 
     return "\n".join(lines) + "\n"
 
