@@ -343,6 +343,10 @@ def load_ip_pool():
     except FileNotFoundError:
         return []
 
+# 输出行数上限（用户 2026-10-10 要求多产出；也可用环境变量覆盖）
+MAX_OUTPUT_LINES = int(os.environ.get("MAX_OUTPUT_LINES", "200"))
+MAX_TOTAL_LINES = int(os.environ.get("MAX_TOTAL_LINES", "400"))
+
 def build_nodes_text(data):
     """生成纯节点行版本 (原版逻辑 + 限制最多 40 个): 每行 = 入口地址#名字$sstp://..."""
     countries = data["countries"]
@@ -371,18 +375,18 @@ def build_nodes_text(data):
         dc_nodes = [n for n in nodes if n.get("residential") != "residential"]
         
         for i, n in enumerate(res_nodes, 1):
-            if len(lines) >= 40:
+            if len(lines) >= MAX_OUTPUT_LINES:
                 break
             entry = random.choice(edge)
             lines.append(f"{entry}#{zh}-住宅-{i:02d}$sstp://vpn:vpn@{n['host']}:{n['port']}")
             
         for i, n in enumerate(dc_nodes, 1):
-            if len(lines) >= 40:
+            if len(lines) >= MAX_OUTPUT_LINES:
                 break
             entry = random.choice(edge)
             lines.append(f"{entry}#{zh}-机房-{i:02d}$sstp://vpn:vpn@{n['host']}:{n['port']}")
             
-        if len(lines) >= 88:
+        if len(lines) >= MAX_TOTAL_LINES:
             break
 
     return "\n".join(lines) + "\n"
