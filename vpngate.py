@@ -11,6 +11,7 @@ VPN Gate SSTP 节点检测流水线 (精简版)
 """
 
 import base64
+import random
 import csv
 import io
 import json
@@ -306,13 +307,60 @@ EDGE_HOSTS = [
 
 NODES_URL = os.environ.get("NODES_URL", "https://muse2077.github.io/gate/nodes.txt")
 
+# ---------------------------------------------------------------------------
+# 优选 IP 库（ip_pool.txt）：每行一个 IP，脚本每轮随机抽取作为入口地址
+# ---------------------------------------------------------------------------
+IP_POOL_FILE = os.environ.get("IP_POOL_FILE", os.path.join(REPO_DIR, "ip_pool.txt"))
+# IP 库条目的统一端口。用户 2026-10-10 指定用 2053（也可用环境变量 IP_POOL_PORT 覆盖）
+IP_POOL_PORT = int(os.environ.get("IP_POOL_PORT", "2053"))
+
+
+def format_entry(raw, port):
+    """把 ip_pool.txt 里的一行转成「入口地址」格式：
+    裸 IPv6 -> [ipv6]:port；裸 IPv4/域名 -> host:port；已带端口的保持原样"""
+    s = (raw or "").strip()
+    if not s or s.startswith("#"):
+        return None
+    if s.startswith("["):
+        return s                      # 已是 [ipv6]:port 格式
+    if s.count(":") > 1:
+        return f"[{s}]:{port}"        # 裸 IPv6，加方括号
+    if ":" in s:
+        return s                      # 已带端口（域名:port / ipv4:port）
+    return f"{s}:{port}"
+
+
+def load_ip_pool():
+    """加载 ip_pool.txt；文件不存在或为空时返回空列表（调用方回退 EDGE_HOSTS）"""
+    try:
+        with open(IP_POOL_FILE, "r", encoding="utf-8") as f:
+            entries = []
+            for line in f:
+                e = format_entry(line, IP_POOL_PORT)
+                if e and e not in entries:
+                    entries.append(e)
+            return entries
+    except FileNotFoundError:
+        return []
+
 def build_nodes_text(data):
     """生成纯节点行版本 (原版逻辑 + 限制最多 40 个): 每行 = 入口地址#名字$sstp://..."""
     countries = data["countries"]
+    # 入口地址来源优先级：环境变量 HOSTS_ENTRY > ip_pool.txt（随机抽取）> EDGE_HOSTS（旧域名列表）
     _entry = os.environ.get("HOSTS_ENTRY", "").strip()
-    edge = [e.strip() for e in _entry.split(",") if e.strip()] or EDGE_HOSTS
+    if _entry:
+        edge = [e.strip() for e in _entry.split(",") if e.strip()]
+        pool_src = "HOSTS_ENTRY 环境变量"
+    else:
+        _pool = load_ip_pool()
+        if _pool:
+            edge = _pool
+            pool_src = f"ip_pool.txt（{_pool and len(_pool)} 个 IP，随机抽取）"
+        else:
+            edge = EDGE_HOSTS
+            pool_src = "EDGE_HOSTS（ip_pool.txt 为空或不存在，回退）"
+    log("EDGE", f"入口来源：{pool_src}")
     lines = []
-    idx = 0
     ordered = sorted(countries.items(), key=lambda kv: (-int(kv[1].get("count") or 0), str(kv[1].get("code") or kv[0])))
     
     for cname, grp in ordered:
@@ -325,15 +373,13 @@ def build_nodes_text(data):
         for i, n in enumerate(res_nodes, 1):
             if len(lines) >= 40:
                 break
-            entry = edge[idx % len(edge)]
-            idx += 1
+            entry = random.choice(edge)
             lines.append(f"{entry}#{zh}-住宅-{i:02d}$sstp://vpn:vpn@{n['host']}:{n['port']}")
             
         for i, n in enumerate(dc_nodes, 1):
             if len(lines) >= 40:
                 break
-            entry = edge[idx % len(edge)]
-            idx += 1
+            entry = random.choice(edge)
             lines.append(f"{entry}#{zh}-机房-{i:02d}$sstp://vpn:vpn@{n['host']}:{n['port']}")
             
         if len(lines) >= 88:
